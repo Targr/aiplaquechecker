@@ -3,6 +3,8 @@ import os
 import base64
 import json
 from typing import List, Dict, Tuple, Any
+import cv2
+
 
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image, ImageDraw
