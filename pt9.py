@@ -25,45 +25,68 @@ def pil_to_base64(pil_img: Image.Image, fmt: str = "PNG") -> str:
     pil_img.save(buf, format=fmt)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def annotate_image_yolo(img: np.ndarray, detections: List[Dict[str, Any]]) -> Image.Image:
+def annotate_image_yolo(img: np.ndarray, plates: List[Dict[str, Any]]) -> Image.Image:
     pil = Image.fromarray(img)
     draw = ImageDraw.Draw(pil)
-    for det in detections:
-        x1, y1, x2, y2 = det["bbox"]
+    for plate in plates:
+        x1, y1, x2, y2 = plate["bbox"]
         draw.rectangle([x1, y1, x2, y2], outline=(255,0,0), width=3)
-        draw.text((x1, y1-10), f"{det['label']} {det['confidence']:.2f}", fill=(255,255,0))
+        draw.text((x1, y1-10), f"Plate {plate['plate_id']}", fill=(255,255,0))
+        for feat in plate.get("features", []):
+            fx1, fy1, fx2, fy2 = feat["bbox"]
+            draw.rectangle([fx1, fy1, fx2, fy2], outline=(0,255,0), width=2)
+            draw.text((fx1, fy1-10), "Feature", fill=(0,255,255))
     return pil
 
-def process_yolo(image_bytes: bytes) -> List[Dict[str, Any]]:
+def process_yolo(image_bytes: bytes) -> Tuple[List[Dict[str, Any]], np.ndarray]:
     arr = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
     results = yolo_model.predict(img_rgb, imgsz=640, verbose=False)[0]
-    detections = []
+
+    plates = []
+    features = []
+
+    # Separate detections into plates vs features
     for box, conf, cls_id in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
         x1, y1, x2, y2 = map(int, box)
-        detections.append({
+        label = yolo_model.names[int(cls_id)]
+        det = {
             "bbox": [x1, y1, x2, y2],
             "confidence": float(conf),
-            "label": "plaque",  # single class
             "center_x": int((x1+x2)/2),
             "center_y": int((y1+y2)/2),
             "width": x2-x1,
             "height": y2-y1,
-        })
-    return detections, img_rgb
+        }
+        if label.lower() == "plate":
+            det["features"] = []
+            det["plate_id"] = len(plates) + 1
+            plates.append(det)
+        else:
+            features.append(det)
+
+    # Assign features to their plates
+    for feat in features:
+        fx, fy = feat["center_x"], feat["center_y"]
+        for plate in plates:
+            x1, y1, x2, y2 = plate["bbox"]
+            if x1 <= fx <= x2 and y1 <= fy <= y2:
+                plate["features"].append(feat)
+                break  # assign to only one plate
+
+    return plates, img_rgb
 
 # --------- Core Processing ---------
 def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_bytes: List[Tuple[str, bytes]]) -> Dict[str, Any]:
-    detections, img_rgb = process_yolo(image_bytes)
-    annotated = annotate_image_yolo(img_rgb, detections)
+    plates, img_rgb = process_yolo(image_bytes)
+    annotated = annotate_image_yolo(img_rgb, plates)
     annotated_b64 = pil_to_base64(annotated)
     return {
-        "plates": detections,
+        "plates": plates,
         "annotated_image_base64": annotated_b64,
     }
-
 # --------- Routes ---------
 @app.route("/")
 def root():
