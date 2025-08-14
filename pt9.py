@@ -46,7 +46,7 @@ def process_yolo(image_bytes: bytes) -> List[Dict[str, Any]]:
         detections.append({
             "bbox": [x1, y1, x2, y2],
             "confidence": float(conf),
-            "label": "feature",  # single class
+            "label": "plate",  # single class
             "center_x": int((x1+x2)/2),
             "center_y": int((y1+y2)/2),
             "width": x2-x1,
