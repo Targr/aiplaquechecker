@@ -2,10 +2,9 @@ import io
 import os
 import base64
 import json
+import zipfile
 from typing import List, Dict, Tuple, Any
 import cv2
-
-
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image, ImageDraw
 import numpy as np
@@ -25,19 +24,19 @@ def pil_to_base64(pil_img: Image.Image, fmt: str = "PNG") -> str:
     pil_img.save(buf, format=fmt)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def annotate_image_yolo(img: np.ndarray, plates: List[Dict[str, Any]]) -> Image.Image:
+def annotate_image_yolo(img: np.ndarray, detections: List[Dict[str, Any]]) -> Image.Image:
     pil = Image.fromarray(img)
     draw = ImageDraw.Draw(pil)
-    for plate in plates:
-        x1, y1, x2, y2 = plate["bbox"]
-        draw.rectangle([x1, y1, x2, y2], outline=(255,0,0), width=3)
-        draw.text((x1, y1-10), f"Plate {plate['plate_id']}", fill=(255,255,0))
-        for feat in plate.get("features", []):
-            fx1, fy1, fx2, fy2 = feat["bbox"]
-            draw.rectangle([fx1, fy1, fx2, fy2], outline=(0,255,0), width=2)
-            draw.text((fx1, fy1-10), "Feature", fill=(0,255,255))
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        label = det["label"]
+        conf = det["confidence"]
+        color = (0, 255, 0) if label == "plate" else (255, 0, 0)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        draw.text((x1, y1-10), f"{label} {conf:.2f}", fill=color)
     return pil
 
+# --------- YOLO Processing ---------
 def process_yolo(image_bytes: bytes) -> Tuple[List[Dict[str, Any]], np.ndarray]:
     arr = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -45,48 +44,37 @@ def process_yolo(image_bytes: bytes) -> Tuple[List[Dict[str, Any]], np.ndarray]:
 
     results = yolo_model.predict(img_rgb, imgsz=640, verbose=False)[0]
 
-    plates = []
-    features = []
-
-    # Separate detections into plates vs features
+    detections = []
     for box, conf, cls_id in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
         x1, y1, x2, y2 = map(int, box)
-        label = yolo_model.names[int(cls_id)]
-        det = {
+        cls_name = yolo_model.names[int(cls_id)]  # Get actual class name from YOLO
+        detections.append({
             "bbox": [x1, y1, x2, y2],
             "confidence": float(conf),
-            "center_x": int((x1+x2)/2),
-            "center_y": int((y1+y2)/2),
-            "width": x2-x1,
-            "height": y2-y1,
-        }
-        if label.lower() == "plate":
-            det["features"] = []
-            det["plate_id"] = len(plates) + 1
-            plates.append(det)
-        else:
-            features.append(det)
-
-    # Assign features to their plates
-    for feat in features:
-        fx, fy = feat["center_x"], feat["center_y"]
-        for plate in plates:
-            x1, y1, x2, y2 = plate["bbox"]
-            if x1 <= fx <= x2 and y1 <= fy <= y2:
-                plate["features"].append(feat)
-                break  # assign to only one plate
-
-    return plates, img_rgb
+            "label": cls_name,
+            "center_x": int((x1 + x2) / 2),
+            "center_y": int((y1 + y2) / 2),
+            "width": x2 - x1,
+            "height": y2 - y1,
+        })
+    return detections, img_rgb
 
 # --------- Core Processing ---------
 def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_bytes: List[Tuple[str, bytes]]) -> Dict[str, Any]:
-    plates, img_rgb = process_yolo(image_bytes)
-    annotated = annotate_image_yolo(img_rgb, plates)
+    detections, img_rgb = process_yolo(image_bytes)
+    annotated = annotate_image_yolo(img_rgb, detections)
     annotated_b64 = pil_to_base64(annotated)
+
+    # Separate plates and features for frontend clarity
+    plates = [d for d in detections if d["label"].lower() == "plate"]
+    features = [d for d in detections if d["label"].lower() != "plate"]
+
     return {
         "plates": plates,
+        "features": features,
         "annotated_image_base64": annotated_b64,
     }
+
 # --------- Routes ---------
 @app.route("/")
 def root():
@@ -119,11 +107,12 @@ def api_batch():
         for f in files:
             try:
                 result = process_single_image(f.read(), {}, references)
-                total = len(result["plates"])
+                total_features = len(result["features"])
                 rows.append({
                     "image_name": f.filename,
-                    "total_features": total,
-                    "plates": result["plates"]
+                    "total_features": total_features,
+                    "plates": result["plates"],
+                    "features": result["features"]
                 })
                 img_data = base64.b64decode(result["annotated_image_base64"])
                 zf.writestr(f.filename.replace(" ", "_"), img_data)
@@ -131,7 +120,8 @@ def api_batch():
                 rows.append({
                     "image_name": f.filename,
                     "error": str(e),
-                    "plates": []
+                    "plates": [],
+                    "features": []
                 })
 
     zip_buf.seek(0)
@@ -148,4 +138,4 @@ def api_batch():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True)
