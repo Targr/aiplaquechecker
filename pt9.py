@@ -14,7 +14,7 @@ from ultralytics import YOLO
 app = Flask(__name__, static_folder="static", static_url_path="/")
 
 # --- Load YOLO model ---
-MODEL_PATH = "Users/juicejambouree/plate_detection/finetune_12plates/weights/best.pt"  # adjust path
+MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection/finetune_12plates/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
 # --------- Image Utils ---------
