@@ -1,7 +1,6 @@
 import io
 import os
 import base64
-import json
 from typing import List, Dict, Tuple, Any
 import cv2
 
@@ -19,6 +18,9 @@ app = Flask(__name__, static_folder="static", static_url_path="/")
 MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection/finetune_12plates/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
+# --- Class names from the YOLO model ---
+CLASS_NAMES = yolo_model.names  # e.g., {0: 'plate', 1: 'plaque'}
+
 # --------- Image Utils ---------
 def pil_to_base64(pil_img: Image.Image, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
@@ -30,37 +32,38 @@ def annotate_image_yolo(img: np.ndarray, detections: List[Dict[str, Any]]) -> Im
     draw = ImageDraw.Draw(pil)
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
-        draw.rectangle([x1, y1, x2, y2], outline=(255,0,0), width=3)
-        draw.text((x1, y1-10), f"{det['label']} {det['confidence']:.2f}", fill=(255,255,0))
+        draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=3)
+        draw.text((x1, max(0, y1 - 10)), f"{det['label']} {det['confidence']:.2f}", fill=(255, 255, 0))
     return pil
 
-def process_yolo(image_bytes: bytes) -> List[Dict[str, Any]]:
+def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[str, Any]], np.ndarray]:
     arr = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-    results = yolo_model.predict(img_rgb, imgsz=640, verbose=False)[0]
+    results = yolo_model.predict(img_rgb, imgsz=640, verbose=False, conf=conf_threshold)[0]
     detections = []
     for box, conf, cls_id in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
         x1, y1, x2, y2 = map(int, box)
         detections.append({
             "bbox": [x1, y1, x2, y2],
             "confidence": float(conf),
-            "label": "plaque",  # single class
-            "center_x": int((x1+x2)/2),
-            "center_y": int((y1+y2)/2),
-            "width": x2-x1,
-            "height": y2-y1,
+            "label": CLASS_NAMES[int(cls_id)],
+            "center_x": int((x1 + x2) / 2),
+            "center_y": int((y1 + y2) / 2),
+            "width": x2 - x1,
+            "height": y2 - y1,
         })
     return detections, img_rgb
 
 # --------- Core Processing ---------
 def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_bytes: List[Tuple[str, bytes]]) -> Dict[str, Any]:
-    detections, img_rgb = process_yolo(image_bytes)
+    conf_threshold = float(params.get("confidence", 0.25))  # slider value from frontend
+    detections, img_rgb = process_yolo(image_bytes, conf_threshold)
     annotated = annotate_image_yolo(img_rgb, detections)
     annotated_b64 = pil_to_base64(annotated)
     return {
-        "plates": detections,
+        "detections": detections,
         "annotated_image_base64": annotated_b64,
     }
 
@@ -75,10 +78,12 @@ def api_process():
         return jsonify({"error": "Missing image"}), 400
 
     image_file = request.files["image"]
+    conf_threshold = request.form.get("confidence", 0.25)  # slider value
+
     ref_files = request.files.getlist("references")
     references: List[Tuple[str, bytes]] = [(rf.filename, rf.read()) for rf in ref_files]
 
-    out = process_single_image(image_file.read(), {}, references)
+    out = process_single_image(image_file.read(), {"confidence": conf_threshold}, references)
     return jsonify(out)
 
 @app.post("/api/batch")
@@ -87,6 +92,7 @@ def api_batch():
     if not files:
         return jsonify({"error": "No images uploaded"}), 400
 
+    conf_threshold = request.form.get("confidence", 0.25)
     ref_files = request.files.getlist("references")
     references: List[Tuple[str, bytes]] = [(rf.filename, rf.read()) for rf in ref_files]
 
@@ -95,12 +101,12 @@ def api_batch():
     with zipfile.ZipFile(zip_buf, "w") as zf:
         for f in files:
             try:
-                result = process_single_image(f.read(), {}, references)
-                total = len(result["plates"])
+                result = process_single_image(f.read(), {"confidence": conf_threshold}, references)
+                total = len(result["detections"])
                 rows.append({
                     "image_name": f.filename,
                     "total_features": total,
-                    "plates": result["plates"]
+                    "detections": result["detections"]
                 })
                 img_data = base64.b64decode(result["annotated_image_base64"])
                 zf.writestr(f.filename.replace(" ", "_"), img_data)
@@ -108,7 +114,7 @@ def api_batch():
                 rows.append({
                     "image_name": f.filename,
                     "error": str(e),
-                    "plates": []
+                    "detections": []
                 })
 
     zip_buf.seek(0)
@@ -125,4 +131,4 @@ def api_batch():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True)
