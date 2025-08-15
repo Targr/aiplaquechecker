@@ -9,8 +9,7 @@
     body { background: #f8f9fa; padding-bottom: 40px; }
     .img-preview { max-width: 100%; height: auto; border: 1px solid #ccc; margin-top: 10px; }
     pre { white-space: pre-wrap; word-wrap: break-word; }
-    .slider-container { text-align: center; margin-top: 20px; }
-    #batchImage { max-height: 500px; object-fit: contain; }
+    .slider-value { font-weight: bold; }
   </style>
 </head>
 <body>
@@ -31,6 +30,11 @@
           <label class="form-label">Reference Images (Optional)</label>
           <input class="form-control" type="file" name="references" multiple accept="image/*">
         </div>
+        <!-- Confidence slider -->
+        <div class="mb-3">
+          <label for="confidenceSingle" class="form-label">Confidence Threshold: <span id="confidenceSingleValue" class="slider-value">0.50</span></label>
+          <input type="range" class="form-range" id="confidenceSingle" name="confidence" min="0" max="1" step="0.01" value="0.50">
+        </div>
         <button type="submit" class="btn btn-primary mt-3 w-100">Process</button>
       </form>
       <div id="singleResult" class="mt-3"></div>
@@ -50,6 +54,11 @@
           <label class="form-label">Reference Images (Optional)</label>
           <input class="form-control" type="file" name="references" multiple accept="image/*">
         </div>
+        <!-- Confidence slider -->
+        <div class="mb-3">
+          <label for="confidenceBatch" class="form-label">Confidence Threshold: <span id="confidenceBatchValue" class="slider-value">0.50</span></label>
+          <input type="range" class="form-range" id="confidenceBatch" name="confidence" min="0" max="1" step="0.01" value="0.50">
+        </div>
         <button type="submit" class="btn btn-success mt-3 w-100">Process Batch</button>
       </form>
       <div id="batchResult" class="mt-3"></div>
@@ -64,7 +73,15 @@ async function postFormData(url, formData) {
   return res.json();
 }
 
-// Single image
+// Update slider labels in real-time
+document.getElementById('confidenceSingle').addEventListener('input', function() {
+  document.getElementById('confidenceSingleValue').textContent = this.value;
+});
+document.getElementById('confidenceBatch').addEventListener('input', function() {
+  document.getElementById('confidenceBatchValue').textContent = this.value;
+});
+
+// Single image processing
 document.getElementById('singleForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
@@ -72,14 +89,14 @@ document.getElementById('singleForm').addEventListener('submit', async (e) => {
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/process', formData);
-    resultDiv.innerHTML = `<h6>Detections:</h6><pre>${JSON.stringify(data.detections, null, 2)}</pre>
+    resultDiv.innerHTML = `<h6>Detected Objects:</h6><pre>${JSON.stringify(data, null, 2)}</pre>
       <img class="img-preview" src="data:image/png;base64,${data.annotated_image_base64}">`;
   } catch (err) {
     resultDiv.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
   }
 });
 
-// Batch processing with slider
+// Batch processing
 document.getElementById('batchForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
@@ -87,38 +104,10 @@ document.getElementById('batchForm').addEventListener('submit', async (e) => {
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/batch', formData);
-
-    // Build slider
-    let currentIndex = 0;
-    function renderImage() {
-      const imgData = data.results[currentIndex];
-      document.getElementById('batchImage').src = `data:image/png;base64,${imgData.annotated_image_base64}`;
-      document.getElementById('batchInfo').textContent = 
-        `Image ${currentIndex + 1} of ${data.results.length}\n` +
-        JSON.stringify(imgData.detections, null, 2);
-    }
-
-    resultDiv.innerHTML = `
-      <div class="slider-container">
-        <button class="btn btn-sm btn-outline-secondary me-2" id="prevBtn">Prev</button>
-        <button class="btn btn-sm btn-outline-secondary" id="nextBtn">Next</button>
-        <div><img id="batchImage" class="img-preview mt-3"></div>
-        <pre id="batchInfo" class="mt-3"></pre>
-        <a class="btn btn-sm btn-primary mt-2" href="data:text/csv;base64,${data.csv_base64}" download="results.csv">Download CSV</a>
-        <a class="btn btn-sm btn-secondary mt-2 ms-2" href="data:application/zip;base64,${data.zip_base64}" download="annotated_images.zip">Download ZIP</a>
-      </div>
-    `;
-
-    document.getElementById('prevBtn').addEventListener('click', () => {
-      currentIndex = (currentIndex - 1 + data.results.length) % data.results.length;
-      renderImage();
-    });
-    document.getElementById('nextBtn').addEventListener('click', () => {
-      currentIndex = (currentIndex + 1) % data.results.length;
-      renderImage();
-    });
-
-    renderImage();
+    let html = `<h6>Batch Results:</h6><pre>${JSON.stringify(data.results, null, 2)}</pre>`;
+    html += `<a class="btn btn-sm btn-primary mt-2" href="data:text/csv;base64,${data.csv_base64}" download="results.csv">Download CSV</a>`;
+    html += `<a class="btn btn-sm btn-secondary mt-2 ms-2" href="data:application/zip;base64,${data.zip_base64}" download="annotated_images.zip">Download ZIP</a>`;
+    resultDiv.innerHTML = html;
   } catch (err) {
     resultDiv.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
   }
