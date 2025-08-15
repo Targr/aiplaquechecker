@@ -15,11 +15,11 @@ import zipfile
 app = Flask(__name__, static_folder="static", static_url_path="/")
 
 # --- Load YOLO model ---
-MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection/finetune_12plates/weights/best.pt"
+MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_1/finetune_12plates/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
 # --- Class names from the YOLO model ---
-CLASS_NAMES = yolo_model.names  # e.g., {0: 'plate', 1: 'plaque'}
+CLASS_NAMES = yolo_model.names  # e.g., {0: 'feature', 1: 'feature_many_plates'}
 
 # --------- Image Utils ---------
 def pil_to_base64(pil_img: Image.Image, fmt: str = "PNG") -> str:
