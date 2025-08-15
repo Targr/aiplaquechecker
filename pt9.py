@@ -43,16 +43,24 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
 
     results = yolo_model.predict(img_rgb, imgsz=640, verbose=False, conf=conf_threshold)[0]
     detections = []
+
+    img_area = img_rgb.shape[0] * img_rgb.shape[1]
+    max_area = img_area * 0.33  # caveat: max 33% of image area
+
     for box, conf, cls_id in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
         x1, y1, x2, y2 = map(int, box)
+        width, height = x2 - x1, y2 - y1
+        area = width * height
+        if area > max_area:
+            continue  # skip oversized detections
         detections.append({
             "bbox": [x1, y1, x2, y2],
             "confidence": float(conf),
             "label": CLASS_NAMES[int(cls_id)],
             "center_x": int((x1 + x2) / 2),
             "center_y": int((y1 + y2) / 2),
-            "width": x2 - x1,
-            "height": y2 - y1,
+            "width": width,
+            "height": height,
         })
     return detections, img_rgb
 
