@@ -31,7 +31,16 @@
           <label class="form-label">Reference Images (Optional)</label>
           <input class="form-control" type="file" name="references" multiple accept="image/*">
         </div>
-        <button type="submit" class="btn btn-primary mt-3 w-100">Process</button>
+
+        <!-- Confidence Slider -->
+        <div class="mb-3">
+          <label for="singleConfidence" class="form-label">
+            Detection Confidence: <span id="singleConfValue">0.25</span>
+          </label>
+          <input type="range" class="form-range" id="singleConfidence" min="0" max="1" step="0.01" value="0.25">
+        </div>
+
+        <button type="submit" class="btn btn-primary mt-2 w-100">Process</button>
       </form>
       <div id="singleResult" class="mt-3"></div>
     </div>
@@ -50,7 +59,16 @@
           <label class="form-label">Reference Images (Optional)</label>
           <input class="form-control" type="file" name="references" multiple accept="image/*">
         </div>
-        <button type="submit" class="btn btn-success mt-3 w-100">Process Batch</button>
+
+        <!-- Confidence Slider -->
+        <div class="mb-3">
+          <label for="batchConfidence" class="form-label">
+            Detection Confidence: <span id="batchConfValue">0.25</span>
+          </label>
+          <input type="range" class="form-range" id="batchConfidence" min="0" max="1" step="0.01" value="0.25">
+        </div>
+
+        <button type="submit" class="btn btn-success mt-2 w-100">Process Batch</button>
       </form>
       <div id="batchResult" class="mt-3"></div>
     </div>
@@ -64,10 +82,23 @@ async function postFormData(url, formData) {
   return res.json();
 }
 
+// Update slider display text
+document.getElementById('singleConfidence').addEventListener('input', function () {
+  document.getElementById('singleConfValue').textContent = this.value;
+});
+document.getElementById('batchConfidence').addEventListener('input', function () {
+  document.getElementById('batchConfValue').textContent = this.value;
+});
+
 // Single image
 document.getElementById('singleForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
+
+  // Append confidence value
+  const conf = document.getElementById('singleConfidence').value;
+  formData.append("confidence", conf);
+
   const resultDiv = document.getElementById('singleResult');
   resultDiv.innerHTML = 'Processing...';
   try {
@@ -79,16 +110,20 @@ document.getElementById('singleForm').addEventListener('submit', async (e) => {
   }
 });
 
-// Batch processing with slider
+// Batch processing
 document.getElementById('batchForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
+
+  // Append confidence value
+  const conf = document.getElementById('batchConfidence').value;
+  formData.append("confidence", conf);
+
   const resultDiv = document.getElementById('batchResult');
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/batch', formData);
 
-    // Build slider
     let currentIndex = 0;
     function renderImage() {
       const imgData = data.results[currentIndex];
