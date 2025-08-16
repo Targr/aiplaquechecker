@@ -47,22 +47,42 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
     img_area = img_rgb.shape[0] * img_rgb.shape[1]
     max_area = img_area * 0.33  # caveat: max 33% of image area
 
+    # --- First pass: gather all areas ---
+    raw_detections = []
     for box, conf, cls_id in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
         x1, y1, x2, y2 = map(int, box)
         width, height = x2 - x1, y2 - y1
         area = width * height
-        if area > max_area:
-            continue  # skip oversized detections
+        raw_detections.append((x1, y1, x2, y2, width, height, area, float(conf), int(cls_id)))
+
+    if not raw_detections:
+        return [], img_rgb
+
+    # --- Compute mean + stddev of areas ---
+    areas = [d[6] for d in raw_detections]
+    mean_area = np.mean(areas)
+    std_area = np.std(areas)
+    area_cutoff = mean_area + 2 * std_area
+
+    # --- Second pass: filter ---
+    for (x1, y1, x2, y2, width, height, area, conf, cls_id) in raw_detections:
+        if area > max_area:  # absolute max 33% rule
+            continue
+        if area > area_cutoff:  # outlier rule
+            continue
         detections.append({
             "bbox": [x1, y1, x2, y2],
-            "confidence": float(conf),
-            "label": CLASS_NAMES[int(cls_id)],
+            "confidence": conf,
+            "label": CLASS_NAMES[cls_id],
             "center_x": int((x1 + x2) / 2),
             "center_y": int((y1 + y2) / 2),
             "width": width,
             "height": height,
+            "area": area,
         })
+
     return detections, img_rgb
+
 
 # --------- Core Processing ---------
 def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_bytes: List[Tuple[str, bytes]]) -> Dict[str, Any]:
