@@ -36,44 +36,6 @@ def annotate_image_yolo(img: np.ndarray, detections: List[Dict[str, Any]]) -> Im
         draw.text((x1, max(0, y1 - 10)), f"{det['label']} {det['confidence']:.2f}", fill=(255, 255, 0))
     return pil
 
-import math
-
-def filter_duplicates(detections, min_center_dist=20, dim_sim_thresh=0.2):
-    """
-    Filters out duplicate detections that occupy the same spot.
-    
-    Args:
-        detections: list of dicts with keys "center_x", "center_y", "width", "height", "confidence"
-        min_center_dist: minimum distance (pixels) between centers to consider them separate
-        dim_sim_thresh: fraction difference allowed for width/height similarity (0.2 = ±20%)
-    """
-    keep = []
-    detections = sorted(detections, key=lambda d: d["confidence"], reverse=True)  # high conf first
-
-    for det in detections:
-        cx, cy, w, h = det["center_x"], det["center_y"], det["width"], det["height"]
-
-        is_duplicate = False
-        for kept in keep:
-            kc, ky, kw, kh = kept["center_x"], kept["center_y"], kept["width"], kept["height"]
-
-            # center distance
-            dist = math.hypot(cx - kc, cy - ky)
-
-            # dimension similarity check
-            w_sim = abs(w - kw) / max(w, kw)
-            h_sim = abs(h - kh) / max(h, kh)
-
-            if dist < min_center_dist and w_sim < dim_sim_thresh and h_sim < dim_sim_thresh:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            keep.append(det)
-
-    return keep
-
-
 def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[str, Any]], np.ndarray]:
     arr = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -83,7 +45,7 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
     detections = []
 
     img_area = img_rgb.shape[0] * img_rgb.shape[1]
-    max_area = img_area * 0.33  # caveat: max 33% of image area
+    max_area = img_area * 0.15  # caveat: max 33% of image area
 
     # --- First pass: gather all areas ---
     raw_detections = []
@@ -95,32 +57,6 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
 
     if not raw_detections:
         return [], img_rgb
-
-    # --- Apply size filters (like before) ---
-    for x1, y1, x2, y2, width, height, area, conf, cls_id in raw_detections:
-        if area > max_area:
-            continue  # skip too-big
-        if width <= 0 or height <= 0:
-            continue  # skip degenerate
-
-        detections.append({
-            "x1": x1,
-            "y1": y1,
-            "x2": x2,
-            "y2": y2,
-            "width": width,
-            "height": height,
-            "area": area,
-            "center_x": x1 + width / 2,
-            "center_y": y1 + height / 2,
-            "confidence": conf,
-            "class_id": cls_id,
-        })
-
-    # --- New: filter near-duplicates ---
-    detections = filter_duplicates(detections, min_center_dist=25, dim_sim_thresh=0.25)
-
-    return detections, img_rgb
 
     # --- Compute mean + stddev of areas ---
     areas = [d[6] for d in raw_detections]
