@@ -15,7 +15,7 @@ import zipfile
 app = Flask(__name__, static_folder="static", static_url_path="/")
 
 # --- Load YOLO model ---
-MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_1/finetune_12plates/weights/best.pt"
+MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection/finetune_12plates/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
 # --- Class names from the YOLO model ---
