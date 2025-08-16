@@ -11,6 +11,10 @@
     pre { white-space: pre-wrap; word-wrap: break-word; }
     .slider-container { text-align: center; margin-top: 20px; }
     #batchImage { max-height: 500px; object-fit: contain; }
+    .det-box { border: 1px solid #007bff; margin: 2px; padding: 2px; border-radius: 4px; cursor: pointer; }
+    .det-box.rejected { background: #f8d7da; }
+    .det-box.accepted { background: #d4edda; }
+    .det-box.added { background: #fff3cd; }
   </style>
 </head>
 <body>
@@ -82,6 +86,12 @@ async function postFormData(url, formData) {
   return res.json();
 }
 
+async function postJSON(url, obj) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // Update slider display text
 document.getElementById('singleConfidence').addEventListener('input', function () {
   document.getElementById('singleConfValue').textContent = this.value;
@@ -90,49 +100,113 @@ document.getElementById('batchConfidence').addEventListener('input', function ()
   document.getElementById('batchConfValue').textContent = this.value;
 });
 
+// Render detections with edit buttons
+function renderDetections(detections, container, imgMeta) {
+  container.innerHTML = '';
+  detections.forEach((det, idx) => {
+    const div = document.createElement('div');
+    div.className = 'det-box';
+    div.textContent = `#${idx} ${det.label} conf=${det.confidence?.toFixed(2)}`;
+    div.addEventListener('click', () => {
+      if (div.classList.contains('accepted')) {
+        div.classList.remove('accepted');
+        div.classList.add('rejected');
+      } else if (div.classList.contains('rejected')) {
+        div.classList.remove('rejected');
+      } else {
+        div.classList.add('accepted');
+      }
+    });
+    container.appendChild(div);
+  });
+  // Add manual box button
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-sm btn-warning mt-2';
+  addBtn.textContent = 'Add Detection (mock bbox)';
+  addBtn.addEventListener('click', () => {
+    const label = prompt('Enter label:');
+    if (!label) return;
+    const bbox = [10,10,50,50];
+    const det = { label, bbox };
+    const div = document.createElement('div');
+    div.className = 'det-box added';
+    div.textContent = `[ADDED] ${label}`;
+    container.appendChild(div);
+    div.dataset.added = JSON.stringify(det);
+  });
+  container.appendChild(addBtn);
+
+  // Submit feedback button
+  const fbBtn = document.createElement('button');
+  fbBtn.className = 'btn btn-sm btn-outline-primary mt-2 ms-2';
+  fbBtn.textContent = 'Submit Feedback';
+  fbBtn.addEventListener('click', async () => {
+    const accepted = [];
+    const rejected = [];
+    const added = [];
+    [...container.querySelectorAll('.det-box')].forEach((div, idx) => {
+      if (div.classList.contains('accepted')) {
+        accepted.push(detections[idx]);
+      } else if (div.classList.contains('rejected')) {
+        rejected.push(detections[idx]);
+      } else if (div.classList.contains('added')) {
+        added.push(JSON.parse(div.dataset.added));
+      }
+    });
+    const payload = {
+      image_name: imgMeta.name,
+      image_w: imgMeta.width,
+      image_h: imgMeta.height,
+      accepted, rejected, added
+    };
+    try {
+      const resp = await postJSON('/api/feedback', payload);
+      alert('Feedback submitted!');
+      console.log(resp);
+    } catch(err) {
+      alert('Feedback error: '+err.message);
+    }
+  });
+  container.appendChild(fbBtn);
+}
+
 // Single image
 document.getElementById('singleForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
-
-  // Append confidence value
   const conf = document.getElementById('singleConfidence').value;
   formData.append("confidence", conf);
-
   const resultDiv = document.getElementById('singleResult');
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/process', formData);
-    resultDiv.innerHTML = `<h6>Detections:</h6><pre>${JSON.stringify(data.detections, null, 2)}</pre>
-      <img class="img-preview" src="data:image/png;base64,${data.annotated_image_base64}">`;
+    const img = new Image();
+    img.src = `data:image/png;base64,${data.annotated_image_base64}`;
+    img.onload = () => {
+      renderDetections(data.detections, resultDiv, { name: formData.get('image').name, width: img.width, height: img.height });
+      resultDiv.insertBefore(img, resultDiv.firstChild);
+    };
   } catch (err) {
     resultDiv.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
   }
 });
 
-// Batch processing
+// Batch processing (basic display, no feedback per-image for simplicity)
 document.getElementById('batchForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
-
-  // Append confidence value
   const conf = document.getElementById('batchConfidence').value;
   formData.append("confidence", conf);
-
   const resultDiv = document.getElementById('batchResult');
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/batch', formData);
-
     let currentIndex = 0;
     function renderImage() {
       const imgData = data.results[currentIndex];
       document.getElementById('batchImage').src = `data:image/png;base64,${imgData.annotated_image_base64}`;
-      document.getElementById('batchInfo').textContent = 
-        `Image ${currentIndex + 1} of ${data.results.length}\n` +
-        JSON.stringify(imgData.detections, null, 2);
+      document.getElementById('batchInfo').textContent = `Image ${currentIndex + 1} of ${data.results.length}\n` + JSON.stringify(imgData.detections, null, 2);
     }
-
     resultDiv.innerHTML = `
       <div class="slider-container">
         <button class="btn btn-sm btn-outline-secondary me-2" id="prevBtn">Prev</button>
@@ -143,7 +217,6 @@ document.getElementById('batchForm').addEventListener('submit', async (e) => {
         <a class="btn btn-sm btn-secondary mt-2 ms-2" href="data:application/zip;base64,${data.zip_base64}" download="annotated_images.zip">Download ZIP</a>
       </div>
     `;
-
     document.getElementById('prevBtn').addEventListener('click', () => {
       currentIndex = (currentIndex - 1 + data.results.length) % data.results.length;
       renderImage();
@@ -152,7 +225,6 @@ document.getElementById('batchForm').addEventListener('submit', async (e) => {
       currentIndex = (currentIndex + 1) % data.results.length;
       renderImage();
     });
-
     renderImage();
   } catch (err) {
     resultDiv.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
