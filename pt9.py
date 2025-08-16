@@ -45,7 +45,7 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
     detections = []
 
     img_area = img_rgb.shape[0] * img_rgb.shape[1]
-    max_area = img_area * 0.33  # caveat: max 33% of image area
+    max_area = img_area * 0.15  # caveat: max 33% of image area
 
     # --- First pass: gather all areas ---
     raw_detections = []
