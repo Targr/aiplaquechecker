@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 import zipfile
+from collections import Counter
 
 # --- Flask App ---
 app = Flask(__name__, static_folder="static", static_url_path="/")
@@ -45,7 +46,7 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
     detections = []
 
     img_area = img_rgb.shape[0] * img_rgb.shape[1]
-    max_area = img_area * 0.15  # caveat: max 33% of image area
+    max_area = img_area * 0.15  # max 15% of image area
 
     # --- First pass: gather all areas ---
     raw_detections = []
@@ -66,7 +67,7 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
 
     # --- Second pass: filter ---
     for (x1, y1, x2, y2, width, height, area, conf, cls_id) in raw_detections:
-        if area > max_area:  # absolute max 33% rule
+        if area > max_area:  # absolute max rule
             continue
         if area > area_cutoff:  # outlier rule
             continue
@@ -83,6 +84,25 @@ def process_yolo(image_bytes: bytes, conf_threshold: float) -> Tuple[List[Dict[s
 
     return detections, img_rgb
 
+# --------- Color counting ---------
+def count_detections_by_color(img_rgb: np.ndarray, detections: List[Dict[str, Any]], color_map: Dict[str, Tuple[int,int,int]]) -> Dict[str, int]:
+    """
+    Count detections by user-specified colors.
+    """
+    counts = Counter({color: 0 for color in color_map.keys()})
+    
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        crop = img_rgb[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+        
+        mean_color = crop.mean(axis=(0,1))  # RGB mean
+        # Find closest user-defined color
+        closest_color = min(color_map.keys(), key=lambda c: np.linalg.norm(np.array(color_map[c]) - mean_color))
+        counts[closest_color] += 1
+    
+    return dict(counts)
 
 # --------- Core Processing ---------
 def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_bytes: List[Tuple[str, bytes]]) -> Dict[str, Any]:
@@ -90,9 +110,25 @@ def process_single_image(image_bytes: bytes, params: Dict[str, Any], reference_b
     detections, img_rgb = process_yolo(image_bytes, conf_threshold)
     annotated = annotate_image_yolo(img_rgb, detections)
     annotated_b64 = pil_to_base64(annotated)
+
+    # Optional color counting
+    color_counts = {}
+    user_colors = params.get("colors")  # ["red", "green"]
+    if user_colors:
+        color_map = {
+            "red": (255,0,0),
+            "green": (0,255,0),
+            "blue": (0,0,255),
+            "yellow": (255,255,0),
+            "orange": (255,165,0)
+        }
+        selected_map = {c: color_map[c] for c in user_colors if c in color_map}
+        color_counts = count_detections_by_color(img_rgb, detections, selected_map)
+
     return {
         "detections": detections,
         "annotated_image_base64": annotated_b64,
+        "color_counts": color_counts
     }
 
 # --------- Routes ---------
@@ -111,7 +147,16 @@ def api_process():
     ref_files = request.files.getlist("references")
     references: List[Tuple[str, bytes]] = [(rf.filename, rf.read()) for rf in ref_files]
 
-    out = process_single_image(image_file.read(), {"confidence": conf_threshold}, references)
+    # Parse colors if provided
+    color_param = request.form.get("colors")
+    colors = []
+    if color_param:
+        try:
+            colors = list(eval(color_param)) if isinstance(color_param, str) else color_param
+        except:
+            colors = []
+
+    out = process_single_image(image_file.read(), {"confidence": conf_threshold, "colors": colors}, references)
     return jsonify(out)
 
 @app.post("/api/batch")
@@ -124,17 +169,27 @@ def api_batch():
     ref_files = request.files.getlist("references")
     references: List[Tuple[str, bytes]] = [(rf.filename, rf.read()) for rf in ref_files]
 
+    # Parse colors if provided
+    color_param = request.form.get("colors")
+    colors = []
+    if color_param:
+        try:
+            colors = list(eval(color_param)) if isinstance(color_param, str) else color_param
+        except:
+            colors = []
+
     rows = []
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w") as zf:
         for f in files:
             try:
-                result = process_single_image(f.read(), {"confidence": conf_threshold}, references)
+                result = process_single_image(f.read(), {"confidence": conf_threshold, "colors": colors}, references)
                 total = len(result["detections"])
                 rows.append({
                     "image_name": f.filename,
                     "total_features": total,
-                    "detections": result["detections"]
+                    "detections": result["detections"],
+                    "color_counts": result["color_counts"]
                 })
                 img_data = base64.b64decode(result["annotated_image_base64"])
                 zf.writestr(f.filename.replace(" ", "_"), img_data)
@@ -142,7 +197,8 @@ def api_batch():
                 rows.append({
                     "image_name": f.filename,
                     "error": str(e),
-                    "detections": []
+                    "detections": [],
+                    "color_counts": {}
                 })
 
     zip_buf.seek(0)
