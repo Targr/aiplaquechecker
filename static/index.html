@@ -41,6 +41,14 @@
           <input type="range" class="form-range" id="singleConfidence" min="0" max="1" step="0.01" value="0.25">
         </div>
 
+        <!-- Multi-plate option -->
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="multiPlateSingle">
+          <label class="form-check-label" for="multiPlateSingle">
+            Multiple Plates in this Image
+          </label>
+        </div>
+
         <!-- Color selection -->
         <div class="mb-3">
           <label class="form-label">Select Colors to Count:</label><br>
@@ -77,6 +85,14 @@
             Detection Confidence: <span id="batchConfValue">0.25</span>
           </label>
           <input type="range" class="form-range" id="batchConfidence" min="0" max="1" step="0.01" value="0.25">
+        </div>
+
+        <!-- Multi-plate option -->
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="multiPlateBatch">
+          <label class="form-check-label" for="multiPlateBatch">
+            Multiple Plates in Each Image
+          </label>
         </div>
 
         <!-- Color selection -->
@@ -116,36 +132,47 @@ function getSelectedColors(form) {
   return Array.from(form.querySelectorAll('.color-checkbox:checked')).map(cb => cb.value);
 }
 
+// Render results (handles per-plate if backend returns `plates`)
+function renderResults(data, resultDiv) {
+  if (data.plates) {
+    let html = "<h6>Results per Plate:</h6>";
+    data.plates.forEach((plate, idx) => {
+      html += `
+        <div class="mt-3 p-2 border rounded">
+          <h6>Plate ${idx+1}: ${plate.total_features} features</h6>
+          <img class="img-preview" src="data:image/png;base64,${plate.annotated_image_base64}">
+          <details>
+            <summary>Detections</summary>
+            <pre>${JSON.stringify(plate.detections, null, 2)}</pre>
+          </details>
+        </div>
+      `;
+    });
+    resultDiv.innerHTML = html;
+  } else {
+    let imgHtml = `<img class="img-preview" src="data:image/png;base64,${data.annotated_image_base64}">`;
+    let detailsHtml = `<details><summary>Detections</summary><pre>${JSON.stringify(data.detections, null, 2)}</pre></details>`;
+    let colorHtml = '';
+    if (data.color_counts) {
+      colorHtml = '<ul>' + Object.entries(data.color_counts).map(([c,v]) => `<li>${c}: ${v}</li>`).join('') + '</ul>';
+    }
+    resultDiv.innerHTML = `<h6>Results:</h6>${imgHtml}${detailsHtml}${colorHtml}`;
+  }
+}
+
 // Single image
 document.getElementById('singleForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
-  const conf = document.getElementById('singleConfidence').value;
-  formData.append("confidence", conf);
-
-  // Append colors
-  const colors = getSelectedColors(e.target);
-  formData.append("colors", JSON.stringify(colors));
+  formData.append("confidence", document.getElementById('singleConfidence').value);
+  formData.append("colors", JSON.stringify(getSelectedColors(e.target)));
+  formData.append("multi_plate", document.getElementById("multiPlateSingle").checked);
 
   const resultDiv = document.getElementById('singleResult');
   resultDiv.innerHTML = 'Processing...';
   try {
     const data = await postFormData('/api/process', formData);
-
-    const imgHtml = `<img class="img-preview" src="data:image/png;base64,${data.annotated_image_base64}">`;
-    const detailsHtml = `
-      <details>
-        <summary>Detections (${data.detections.length})</summary>
-        <pre>${JSON.stringify(data.detections, null, 2)}</pre>
-      </details>
-    `;
-
-    let colorHtml = '';
-    if (data.color_counts) {
-      colorHtml = '<ul>' + Object.entries(data.color_counts).map(([c,v]) => `<li>${c}: ${v}</li>`).join('') + '</ul>';
-    }
-
-    resultDiv.innerHTML = `<h6>Results:</h6>${imgHtml}${detailsHtml}${colorHtml}`;
+    renderResults(data, resultDiv);
   } catch (err) {
     resultDiv.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
   }
@@ -155,12 +182,9 @@ document.getElementById('singleForm').addEventListener('submit', async (e) => {
 document.getElementById('batchForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const formData = new FormData(e.target);
-  const conf = document.getElementById('batchConfidence').value;
-  formData.append("confidence", conf);
-
-  // Append colors
-  const colors = getSelectedColors(e.target);
-  formData.append("colors", JSON.stringify(colors));
+  formData.append("confidence", document.getElementById('batchConfidence').value);
+  formData.append("colors", JSON.stringify(getSelectedColors(e.target)));
+  formData.append("multi_plate", document.getElementById("multiPlateBatch").checked);
 
   const resultDiv = document.getElementById('batchResult');
   resultDiv.innerHTML = 'Processing...';
@@ -170,22 +194,18 @@ document.getElementById('batchForm').addEventListener('submit', async (e) => {
 
     function renderImage() {
       const imgData = data.results[currentIndex];
-
-      const imgHtml = `<img id="batchImage" class="img-preview mt-3" src="data:image/png;base64,${imgData.annotated_image_base64}">`;
-      const detailsHtml = `
+      let html = `
+        <img id="batchImage" class="img-preview mt-3" src="data:image/png;base64,${imgData.annotated_image_base64}">
         <details>
           <summary>Detections (${imgData.total_features})</summary>
           <pre>${JSON.stringify(imgData.detections, null, 2)}</pre>
         </details>
       `;
-
-      let colorHtml = '';
       if (imgData.color_counts) {
-        colorHtml = '<ul>' + Object.entries(imgData.color_counts).map(([c,v]) => `<li>${c}: ${v}</li>`).join('') + '</ul>';
+        html += '<ul>' + Object.entries(imgData.color_counts).map(([c,v]) => `<li>${c}: ${v}</li>`).join('') + '</ul>';
       }
-
+      document.getElementById('batchInfo').innerHTML = html;
       document.getElementById('batchImage').src = `data:image/png;base64,${imgData.annotated_image_base64}`;
-      document.getElementById('batchInfo').innerHTML = detailsHtml + colorHtml;
     }
 
     resultDiv.innerHTML = `
