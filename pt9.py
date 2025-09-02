@@ -16,7 +16,7 @@ from collections import Counter
 app = Flask(__name__, static_folder="static", static_url_path="/")
 
 # --- Load YOLO model ---
-MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_4/finetune_12plates_4/weights/best.pt"
+MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_many_class/finetune_12plates_sorry_petey/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
 # --- Class names from the YOLO model ---
