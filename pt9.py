@@ -16,11 +16,11 @@ from collections import Counter
 app = Flask(__name__, static_folder="static", static_url_path="/")
 
 # --- Load YOLO model ---
-MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_many_class/finetune_12plates_sorry_petey/weights/best.pt"
+MODEL_PATH = "/Users/juicejambouree/Downloads/plate_detection_4/finetune_12plates_4/weights/best.pt"
 yolo_model = YOLO(MODEL_PATH)
 
 # --- Class names from the YOLO model ---
-CLASS_NAMES = yolo_model.names  # e.g., {0: 'small', 1: 'med-small', 2: 'medium', 3: 'med-large', 4: 'large'}
+CLASS_NAMES = yolo_model.names  # e.g., {0: 'feature', 1: 'feature_many_plates'}
 
 # --------- Image Utils ---------
 def pil_to_base64(pil_img: Image.Image, fmt: str = "PNG") -> str:
